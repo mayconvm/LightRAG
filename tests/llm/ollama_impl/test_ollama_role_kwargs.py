@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from tests.api.workspace_test_utils import MockWorkspaceManager
 
 pytestmark = pytest.mark.offline
 
@@ -33,8 +34,6 @@ class _FakeRag:
             return "query"
 
         self.llm_model_func = base_func
-        # ollama_api.py reads `rag.role_llm_funcs[role]` and
-        # `rag.role_llm_kwargs[role]`; expose them as plain dict mappings here.
         self.role_llm_funcs = {"query": query_func}
         self.role_llm_kwargs = {"query": self._query_kwargs}
 
@@ -55,7 +54,9 @@ def _make_client(monkeypatch) -> tuple[TestClient, _FakeRag]:
     ollama_api_module = importlib.import_module("lightrag.api.routers.ollama_api")
     OllamaAPI = ollama_api_module.OllamaAPI
     rag = _FakeRag()
-    api = OllamaAPI(rag, top_k=20, api_key=None)
+    wm = MockWorkspaceManager()
+    wm.set_default_rag(rag)
+    api = OllamaAPI(wm, top_k=20, api_key=None)
     app = FastAPI()
     app.include_router(api.router, prefix="/api")
     return TestClient(app), rag
