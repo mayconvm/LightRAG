@@ -48,7 +48,6 @@ from lightrag.constants import (
     DEFAULT_LOG_FILENAME,
 )
 from lightrag.api.routers.document_routes import (
-    DocumentManager,
     create_document_routes,
 )
 from lightrag.parser.routing import (
@@ -2354,7 +2353,7 @@ def create_app(args):
                     "enable_llm_cache_for_extract": args.enable_llm_cache_for_extract,
                     "enable_llm_cache": args.enable_llm_cache,
                     "vlm_process_enable": args.vlm_process_enable,
-                    "workspace": default_workspace,
+                    "workspace": workspace,
                     "storage_workspaces": _get_storage_workspaces(rag),
                     "max_graph_nodes": args.max_graph_nodes,
                     # Rerank configuration

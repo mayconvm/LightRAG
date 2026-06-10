@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field, field_validator
 from lightrag import LightRAG
 from lightrag.base import DeletionResult
 from lightrag.utils import logger
-from lightrag.api.workspace_manager import extract_workspace_from_headers
 from ..utils_api import get_combined_auth_dependency
 from .document_routes import check_pipeline_busy_or_raise
 

@@ -18,6 +18,8 @@ _utils = importlib.import_module("lightrag.utils")
 _parser_routing = importlib.import_module("lightrag.parser.routing")
 sys.argv = _original_argv
 
+from tests.api.workspace_test_utils import MockWorkspaceManager  # noqa: E402
+
 DocStatus = _base.DocStatus
 DeletionResult = _base.DeletionResult
 FULL_DOCS_FORMAT_LIGHTRAG = _constants.FULL_DOCS_FORMAT_LIGHTRAG
@@ -38,6 +40,22 @@ DocumentManager = _document_routes.DocumentManager
 create_document_routes = _document_routes.create_document_routes
 
 pytestmark = pytest.mark.offline
+
+
+def _wrap_routes(rag, doc_manager):
+    """Wrap ``create_document_routes`` for the new workspace_manager signature.
+
+    Returns a router configured with a ``MockWorkspaceManager``.
+    The ``doc_manager`` argument is accepted for backward compatibility with
+    existing test helpers but is ignored — the factory creates its own.
+    """
+    wm = MockWorkspaceManager()
+    wm.set_default_rag(rag)
+    return create_document_routes(
+        wm,
+        str(doc_manager.base_input_dir) if hasattr(doc_manager, "base_input_dir") else "/tmp",
+        rag,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -947,7 +965,7 @@ async def test_upload_rejects_same_name_failed_doc_status_without_full_docs(
             }
         }
     )
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     upload_endpoint = [
         route.endpoint
         for route in router.routes
@@ -976,7 +994,7 @@ async def test_upload_rejects_parser_hinted_filesystem_duplicate(tmp_path, monke
     (tmp_path / "existing.docx").write_bytes(b"existing docx bytes")
     doc_manager = DocumentManager(str(tmp_path))
     rag = _DuplicateUploadRag({})
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     upload_endpoint = [
         route.endpoint
         for route in router.routes
@@ -1020,7 +1038,7 @@ async def test_upload_succeeds_concurrent_with_pipeline_busy(tmp_path, monkeypat
     pipeline_status["pending_enqueues"] = 0
     pipeline_status["busy"] = True
 
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     upload_endpoint = [
         route.endpoint
         for route in router.routes
@@ -1066,7 +1084,7 @@ async def test_upload_returns_409_when_scanning_classification(tmp_path, monkeyp
     pipeline_status["scanning"] = True
     pipeline_status["scanning_exclusive"] = True
 
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     upload_endpoint = [
         route.endpoint
         for route in router.routes
@@ -1110,7 +1128,7 @@ async def test_upload_succeeds_during_scan_processing_phase(tmp_path, monkeypatc
     pipeline_status["busy"] = True
     pipeline_status["pending_enqueues"] = 0
 
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     upload_endpoint = [
         route.endpoint
         for route in router.routes
@@ -1146,7 +1164,7 @@ async def test_scan_endpoint_returns_skipped_when_pipeline_busy(tmp_path):
     )
     pipeline_status["busy"] = True
 
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     scan_endpoint = [
         route.endpoint
         for route in router.routes
@@ -1178,7 +1196,7 @@ async def test_scan_endpoint_returns_skipped_when_already_scanning(tmp_path):
     )
     pipeline_status["scanning"] = True
 
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     scan_endpoint = [
         route.endpoint
         for route in router.routes
@@ -1210,7 +1228,7 @@ async def test_scan_endpoint_acquires_and_releases_scanning_flag(tmp_path, monke
     pipeline_status["busy"] = False
     pipeline_status["scanning"] = False
 
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     scan_endpoint = [
         route.endpoint
         for route in router.routes
@@ -1257,7 +1275,7 @@ async def test_scan_endpoint_returns_skipped_when_enqueue_pending(tmp_path):
     # Simulate a reservation made by /upload that has not yet released.
     pipeline_status["pending_enqueues"] = 1
 
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     scan_endpoint = [
         route.endpoint
         for route in router.routes
@@ -1301,7 +1319,7 @@ async def test_reserve_enqueue_slot_blocks_concurrent_scan_until_release(tmp_pat
     assert reserved is True
     assert pipeline_status["pending_enqueues"] == 1
 
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     scan_endpoint = [
         route.endpoint
         for route in router.routes
@@ -1389,7 +1407,7 @@ async def test_two_concurrent_uploads_both_succeed_when_pipeline_busy(
     pipeline_status["pending_enqueues"] = 0
     pipeline_status["busy"] = True
 
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     upload_endpoint = [
         route.endpoint
         for route in router.routes
@@ -1555,7 +1573,7 @@ async def test_clear_documents_sets_and_clears_destructive_busy(tmp_path):
         "pipeline_status", workspace=rag.workspace
     )
 
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     clear_endpoint = [
         route.endpoint
         for route in router.routes
@@ -1595,7 +1613,7 @@ async def test_clear_documents_refuses_when_scanning_or_pending_enqueues(tmp_pat
         "pipeline_status", workspace=rag.workspace
     )
 
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     clear_endpoint = [
         route.endpoint
         for route in router.routes
@@ -1652,7 +1670,7 @@ async def test_delete_document_reserves_destructive_busy_synchronously(tmp_path)
         "pipeline_status", workspace=rag.workspace
     )
 
-    router = create_document_routes(rag, doc_manager)
+    router = _wrap_routes(rag, doc_manager)
     delete_endpoint = [
         route.endpoint
         for route in router.routes

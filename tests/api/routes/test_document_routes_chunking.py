@@ -27,6 +27,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from tests.api.workspace_test_utils import MockWorkspaceManager
+
 _original_argv = sys.argv[:]
 sys.argv = [sys.argv[0]]
 _dr = importlib.import_module("lightrag.api.routers.document_routes")
@@ -456,9 +458,10 @@ def _make_client(monkeypatch, addon_params=None):
     rag = _FwdRag()
     rag.addon_params = addon_params if addon_params is not None else {}
 
+    wm = MockWorkspaceManager()
     app = FastAPI()
     app.include_router(
-        create_document_routes(rag, SimpleNamespace(), api_key="test-key")
+        create_document_routes(wm, "/tmp", rag, api_key="test-key")
     )
     return TestClient(app), captured
 

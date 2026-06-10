@@ -27,6 +27,8 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from tests.api.workspace_test_utils import MockWorkspaceManager
+
 # Importing routers loads ``lightrag.api.config`` which parses ``sys.argv`` via
 # argparse. Stash argv so pytest's CLI flags don't trip the parser.
 _original_argv = sys.argv[:]
@@ -94,8 +96,10 @@ def _make_mock_rag() -> SimpleNamespace:
 
 def _build_client(rag: SimpleNamespace) -> TestClient:
     app = FastAPI()
-    app.include_router(create_graph_routes(rag, api_key=_API_KEY))
-    app.include_router(create_document_routes(rag, SimpleNamespace(), api_key=_API_KEY))
+    wm = MockWorkspaceManager()
+    wm.set_default_rag(rag)
+    app.include_router(create_graph_routes(wm, api_key=_API_KEY))
+    app.include_router(create_document_routes(wm, "/tmp", rag, api_key=_API_KEY))
     return TestClient(app)
 
 

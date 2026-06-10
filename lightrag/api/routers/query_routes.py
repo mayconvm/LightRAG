@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from lightrag import LightRAG
 from lightrag.base import QueryParam
 from lightrag.api.utils_api import get_combined_auth_dependency
-from lightrag.api.workspace_manager import extract_workspace_from_headers
 from lightrag.utils import logger
 from pydantic import BaseModel, Field, field_validator
 

@@ -7,10 +7,8 @@ across workspaces.
 
 from __future__ import annotations
 
-import importlib
 import sys
-from typing import Any, Optional
-from unittest.mock import AsyncMock
+from typing import Any
 
 import pytest
 from fastapi import FastAPI, Request
@@ -19,19 +17,18 @@ from fastapi.testclient import TestClient
 # Stash argv so pytest flags don't trip lightrag's argparse
 _original_argv = sys.argv[:]
 sys.argv = [sys.argv[0]]
-from lightrag.api.workspace_manager import (
+from lightrag.api.workspace_manager import (  # noqa: E402
     WorkspaceManager,
     sanitize_workspace,
     extract_workspace_from_headers,
 )
-from lightrag.api.routers.query_routes import create_query_routes
-from lightrag.api.routers.graph_routes import create_graph_routes
-from lightrag.api.routers.document_routes import create_document_routes
-from lightrag.api.routers.ollama_api import OllamaAPI
+from lightrag.api.routers.query_routes import create_query_routes  # noqa: E402
+from lightrag.api.routers.graph_routes import create_graph_routes  # noqa: E402
+from lightrag.api.routers.document_routes import create_document_routes  # noqa: E402
 
 sys.argv = _original_argv
 
-from .workspace_test_utils import MockWorkspaceManager, make_mock_rag
+from .workspace_test_utils import MockWorkspaceManager, make_mock_rag  # noqa: E402
 
 pytestmark = pytest.mark.offline
 
@@ -422,10 +419,11 @@ class TestMultiWorkspaceAPI:
         monkeypatch.setattr(
             document_routes, "check_pipeline_busy_or_raise", _noop_guard
         )
-        import importlib
 
-        importlib.reload(
-            importlib.import_module("lightrag.api.routers.graph_routes")
+        import importlib as _il
+
+        _il.reload(
+            _il.import_module("lightrag.api.routers.graph_routes")
         )
         from lightrag.api.routers.graph_routes import create_graph_routes as cgr
 
@@ -473,14 +471,11 @@ class TestWorkspaceManagerViaAPI:
         default_rag = make_mock_rag()
 
         # Register workspace management endpoints + routes
-        from fastapi import Depends, HTTPException
+        from fastapi import HTTPException
 
         from lightrag.api.workspace_manager import (
             sanitize_workspace,
         )
-        from lightrag.api.utils_api import get_combined_auth_dependency
-
-        combined_auth = get_combined_auth_dependency(_API_KEY)
 
         @app.get("/workspaces")
         async def list_workspaces():

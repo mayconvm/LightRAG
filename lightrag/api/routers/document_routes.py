@@ -2965,67 +2965,97 @@ def create_document_routes(
     @router.post(
         "/scan", response_model=ScanResponse, dependencies=[Depends(combined_auth)]
     )
-    async def scan_for_new_documents(
-        request: Request,
-        background_tasks: BackgroundTasks,
-        rag: LightRAG = Depends(_resolve_rag),
-    ):
+    async def scan_for_new_documents(background_tasks: BackgroundTasks):
         """
         Trigger the scanning process for new documents.
-        ...
+
+        Refuses to start a new scan with
+        ``status='scanning_skipped_pipeline_busy'`` (and does not
+        schedule a background task) when any of these is set:
+
+        - ``pipeline_status["busy"]`` — the processing loop or another
+          destructive job is running.
+        - ``pipeline_status["scanning"]`` — another scan is already
+          running (any phase: classification or processing).
+        - ``pipeline_status["pending_enqueues"] > 0`` — an /upload,
+          /text or /texts endpoint has reserved a slot whose bg task
+          has not yet written to doc_status; starting a scan now would
+          race scan's classification reads against that pending write.
+
+        Both ``scanning`` and ``scanning_exclusive`` are acquired
+        synchronously here so a subsequent fast-follow request hits the
+        guard rather than racing against the not-yet-started task.
+        ``run_scanning_process`` clears ``scanning_exclusive`` once
+        classification is done, allowing concurrent uploads to land
+        while the scan-driven processing finishes.
+
+        Returns:
+            ScanResponse: A response object containing the scanning status and track_id
         """
         from lightrag.exceptions import PipelineNotInitializedError
         from lightrag.kg.shared_storage import get_namespace_data, get_namespace_lock
 
-        ws: str = getattr(request.state, "workspace", "")
-        dm = _get_doc_manager(ws)
         track_id = generate_track_id("scan")
 
         try:
             pipeline_status = await get_namespace_data(
-                "pipeline_status", workspace=ws
+                "pipeline_status", workspace=rag.workspace
             )
         except PipelineNotInitializedError:
-            background_tasks.add_task(run_scanning_process, rag, dm, track_id)
+            background_tasks.add_task(run_scanning_process, rag, doc_manager, track_id)
             return ScanResponse(
                 status="scanning_started",
                 message="Scanning process has been initiated in the background",
                 track_id=track_id,
             )
-        pipeline_status_lock = get_namespace_lock("pipeline_status", workspace=ws)
+        pipeline_status_lock = get_namespace_lock(
+            "pipeline_status", workspace=rag.workspace
+        )
 
         async with pipeline_status_lock:
             if pipeline_status.get("busy"):
-                logger.warning("Scan request skipped: pipeline is busy")
+                logger.warning(
+                    "Scan request skipped: pipeline is busy processing documents"
+                )
                 return ScanResponse(
                     status="scanning_skipped_pipeline_busy",
-                    message="Pipeline is currently busy processing documents. "
-                    "Wait for the running job to finish before triggering another scan.",
+                    message=(
+                        "Pipeline is currently busy processing documents. "
+                        "Wait for the running job to finish before triggering another scan."
+                    ),
                     track_id=track_id,
                 )
             if pipeline_status.get("scanning"):
-                logger.warning("Scan request skipped: another scan is in progress")
+                logger.warning(
+                    "Scan request skipped: another scan is already in progress"
+                )
                 return ScanResponse(
                     status="scanning_skipped_pipeline_busy",
-                    message="Another scan is already in progress. "
-                    "Wait for it to finish before triggering a new one.",
+                    message=(
+                        "Another scan is already in progress. "
+                        "Wait for it to finish before triggering a new one."
+                    ),
                     track_id=track_id,
                 )
             pending_enqueues = pipeline_status.get("pending_enqueues", 0)
             if pending_enqueues > 0:
                 logger.warning(
-                    "Scan request skipped: %d pending enqueue(s)", pending_enqueues
+                    "Scan request skipped: "
+                    f"{pending_enqueues} pending enqueue(s) reserved by "
+                    "upload/insert endpoints"
                 )
                 return ScanResponse(
                     status="scanning_skipped_pipeline_busy",
-                    message="Document upload/insert is being enqueued. "
-                    "Wait for in-flight work to complete before triggering a scan.",
+                    message=(
+                        "Document upload/insert is being enqueued. "
+                        "Wait for in-flight work to complete before triggering a scan."
+                    ),
                     track_id=track_id,
                 )
             pipeline_status["scanning"] = True
             pipeline_status["scanning_exclusive"] = True
 
-        background_tasks.add_task(run_scanning_process, rag, dm, track_id)
+        background_tasks.add_task(run_scanning_process, rag, doc_manager, track_id)
         return ScanResponse(
             status="scanning_started",
             message="Scanning process has been initiated in the background",
@@ -3036,10 +3066,7 @@ def create_document_routes(
         "/upload", response_model=InsertResponse, dependencies=[Depends(combined_auth)]
     )
     async def upload_to_input_dir(
-        request: Request,
-        background_tasks: BackgroundTasks,
-        file: UploadFile = File(...),
-        rag: LightRAG = Depends(_resolve_rag),
+        background_tasks: BackgroundTasks, file: UploadFile = File(...)
     ):
         """
         Upload a file to the input directory and index it.

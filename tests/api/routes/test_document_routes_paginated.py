@@ -6,6 +6,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from tests.api.workspace_test_utils import MockWorkspaceManager
+
 _original_argv = sys.argv[:]
 sys.argv = [sys.argv[0]]
 _document_routes = importlib.import_module("lightrag.api.routers.document_routes")
@@ -65,11 +67,15 @@ class _FakeDocStatusStorage:
 
 
 _fake_doc_status = _FakeDocStatusStorage()
+rag_stub = SimpleNamespace(doc_status=_fake_doc_status, workspace="")
+_wm = MockWorkspaceManager()
+_wm.set_default_rag(rag_stub)
 _app = FastAPI()
 _app.include_router(
     create_document_routes(
-        SimpleNamespace(doc_status=_fake_doc_status),
-        SimpleNamespace(),
+        _wm,
+        "/tmp",
+        rag_stub,
         api_key="test-key",
     )
 )
