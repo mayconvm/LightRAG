@@ -2,8 +2,8 @@
 
 LightRAG supports **multiple isolated workspaces** within a single server instance. Each workspace has its own storage backends, document index, knowledge graph, and pipeline state — all served from one process.
 
-> **Comparison with Multi-Site Deployment** (`MultiSiteDeployment.md`):  
-> Multi-site runs separate backend *processes* (containers) behind a reverse proxy.  
+> **Comparison with Multi-Site Deployment** (`MultiSiteDeployment.md`):
+> Multi-site runs separate backend *processes* (containers) behind a reverse proxy.
 > Multi-workspace runs a single process that serves many logically isolated data
 > partitions simultaneously. Choose multi-site when you need process-level
 > isolation or different LLM/storage backends per tenant; choose multi-workspace

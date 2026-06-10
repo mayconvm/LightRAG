@@ -1990,9 +1990,7 @@ def create_app(args):
                     "model": role_llm_configs[spec.name]["model"],
                     "host": role_llm_configs[spec.name]["host"],
                     "api_key": role_llm_configs[spec.name]["api_key"],
-                    "provider_options": role_llm_configs[spec.name][
-                        "provider_options"
-                    ],
+                    "provider_options": role_llm_configs[spec.name]["provider_options"],
                     "bedrock_aws_options": role_llm_configs[spec.name][
                         "bedrock_aws_options"
                     ],

@@ -17,6 +17,7 @@ from lightrag.utils import logger
 # Public helpers
 # ---------------------------------------------------------------------------
 
+
 def sanitize_workspace(workspace: str) -> str:
     """Sanitize workspace name: only alphanumeric and underscores allowed."""
     if not workspace:
@@ -45,6 +46,7 @@ def extract_workspace_from_headers(headers) -> str:
 # ---------------------------------------------------------------------------
 # WorkspaceManager
 # ---------------------------------------------------------------------------
+
 
 class WorkspaceManager:
     """Manages a pool of per-workspace :class:`LightRAG` instances.

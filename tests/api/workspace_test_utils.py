@@ -41,14 +41,10 @@ def make_mock_rag(**overrides: Any) -> SimpleNamespace:
         "ainsert": AsyncMock(return_value="mock-track-id"),
         "ainsert_data": AsyncMock(return_value=None),
         "adelete_by_entity": AsyncMock(
-            return_value=SimpleNamespace(
-                status="success", message="deleted", doc_id=""
-            )
+            return_value=SimpleNamespace(status="success", message="deleted", doc_id="")
         ),
         "adelete_by_relation": AsyncMock(
-            return_value=SimpleNamespace(
-                status="success", message="deleted", doc_id=""
-            )
+            return_value=SimpleNamespace(status="success", message="deleted", doc_id="")
         ),
         "adelete_by_doc_id": AsyncMock(
             return_value=SimpleNamespace(
@@ -56,9 +52,7 @@ def make_mock_rag(**overrides: Any) -> SimpleNamespace:
             )
         ),
         "aclear_documents": AsyncMock(
-            return_value=SimpleNamespace(
-                status="success", message="cleared", doc_id=""
-            )
+            return_value=SimpleNamespace(status="success", message="cleared", doc_id="")
         ),
         "aedit_entity": AsyncMock(
             return_value={

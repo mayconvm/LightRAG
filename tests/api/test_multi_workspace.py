@@ -422,9 +422,7 @@ class TestMultiWorkspaceAPI:
 
         import importlib as _il
 
-        _il.reload(
-            _il.import_module("lightrag.api.routers.graph_routes")
-        )
+        _il.reload(_il.import_module("lightrag.api.routers.graph_routes"))
         from lightrag.api.routers.graph_routes import create_graph_routes as cgr
 
         app2 = FastAPI()

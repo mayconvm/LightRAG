@@ -460,9 +460,7 @@ def _make_client(monkeypatch, addon_params=None):
 
     wm = MockWorkspaceManager()
     app = FastAPI()
-    app.include_router(
-        create_document_routes(wm, "/tmp", rag, api_key="test-key")
-    )
+    app.include_router(create_document_routes(wm, "/tmp", rag, api_key="test-key"))
     return TestClient(app), captured
 
 

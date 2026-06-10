@@ -53,7 +53,9 @@ def _wrap_routes(rag, doc_manager):
     wm.set_default_rag(rag)
     return create_document_routes(
         wm,
-        str(doc_manager.base_input_dir) if hasattr(doc_manager, "base_input_dir") else "/tmp",
+        str(doc_manager.base_input_dir)
+        if hasattr(doc_manager, "base_input_dir")
+        else "/tmp",
         rag,
     )
 
