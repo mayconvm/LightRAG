@@ -9,6 +9,7 @@ from enum import Enum
 from fastapi.responses import StreamingResponse
 import asyncio
 from lightrag import LightRAG, QueryParam
+from lightrag.api.workspace_manager import WorkspaceManager
 from lightrag.utils import TiktokenTokenizer
 from lightrag.api.utils_api import get_combined_auth_dependency
 from fastapi import Depends
@@ -218,13 +219,25 @@ def parse_query_mode(query: str) -> tuple[str, SearchMode, bool, Optional[str]]:
 
 
 class OllamaAPI:
-    def __init__(self, rag: LightRAG, top_k: int = 60, api_key: Optional[str] = None):
-        self.rag = rag
-        self.ollama_server_infos = rag.ollama_server_infos
+    def __init__(
+        self,
+        workspace_manager: WorkspaceManager,
+        top_k: int = 60,
+        api_key: Optional[str] = None,
+    ):
+        self._workspace_manager = workspace_manager
+        self._default_rag: LightRAG | None = None
+        self.ollama_server_infos = None
         self.top_k = top_k
         self.api_key = api_key
         self.router = APIRouter(tags=["ollama"])
         self.setup_routes()
+
+    async def _ensure_rag(self) -> LightRAG:
+        if self._default_rag is None:
+            self._default_rag = await self._workspace_manager.get_or_create("")
+            self.ollama_server_infos = self._default_rag.ollama_server_infos
+        return self._default_rag
 
     def setup_routes(self):
         # Create combined auth dependency for Ollama API routes
@@ -238,6 +251,7 @@ class OllamaAPI:
         @self.router.get("/tags", dependencies=[Depends(combined_auth)])
         async def get_tags():
             """Return available models acting as an Ollama server"""
+            await self._ensure_rag()
             return OllamaTagResponse(
                 models=[
                     {
@@ -300,15 +314,15 @@ class OllamaAPI:
                 prompt_tokens = estimate_tokens(query)
 
                 role_kwargs = (
-                    dict(self.rag.role_llm_kwargs["query"])
-                    if self.rag.role_llm_kwargs["query"] is not None
-                    else dict(self.rag.llm_model_kwargs)
+                    dict((await self._ensure_rag()).role_llm_kwargs["query"])
+                    if (await self._ensure_rag()).role_llm_kwargs["query"] is not None
+                    else dict((await self._ensure_rag()).llm_model_kwargs)
                 )
                 if request.system:
                     role_kwargs["system_prompt"] = request.system
 
                 if request.stream:
-                    response = await (self.rag.role_llm_funcs["query"])(
+                    response = await ((await self._ensure_rag()).role_llm_funcs["query"])(
                         query, stream=True, **role_kwargs
                     )
 
@@ -433,7 +447,7 @@ class OllamaAPI:
                     )
                 else:
                     first_chunk_time = time.time_ns()
-                    response_text = await (self.rag.role_llm_funcs["query"])(
+                    response_text = await ((await self._ensure_rag()).role_llm_funcs["query"])(
                         query, stream=False, **role_kwargs
                     )
                     last_chunk_time = time.time_ns()
@@ -521,20 +535,20 @@ class OllamaAPI:
                     # Determine if the request is prefix with "/bypass"
                     if mode == SearchMode.bypass:
                         role_kwargs = (
-                            dict(self.rag.role_llm_kwargs["query"])
-                            if self.rag.role_llm_kwargs["query"] is not None
-                            else dict(self.rag.llm_model_kwargs)
+                            dict((await self._ensure_rag()).role_llm_kwargs["query"])
+                            if (await self._ensure_rag()).role_llm_kwargs["query"] is not None
+                            else dict((await self._ensure_rag()).llm_model_kwargs)
                         )
                         if request.system:
                             role_kwargs["system_prompt"] = request.system
-                        response = await (self.rag.role_llm_funcs["query"])(
+                        response = await ((await self._ensure_rag()).role_llm_funcs["query"])(
                             cleaned_query,
                             stream=True,
                             history_messages=conversation_history,
                             **role_kwargs,
                         )
                     else:
-                        response = await self.rag.aquery(
+                        response = await (await self._ensure_rag()).aquery(
                             cleaned_query, param=query_param
                         )
 
@@ -688,21 +702,21 @@ class OllamaAPI:
                     )
                     if match_result or mode == SearchMode.bypass:
                         role_kwargs = (
-                            dict(self.rag.role_llm_kwargs["query"])
-                            if self.rag.role_llm_kwargs["query"] is not None
-                            else dict(self.rag.llm_model_kwargs)
+                            dict((await self._ensure_rag()).role_llm_kwargs["query"])
+                            if (await self._ensure_rag()).role_llm_kwargs["query"] is not None
+                            else dict((await self._ensure_rag()).llm_model_kwargs)
                         )
                         if request.system:
                             role_kwargs["system_prompt"] = request.system
 
-                        response_text = await (self.rag.role_llm_funcs["query"])(
+                        response_text = await ((await self._ensure_rag()).role_llm_funcs["query"])(
                             cleaned_query,
                             stream=False,
                             history_messages=conversation_history,
                             **role_kwargs,
                         )
                     else:
-                        response_text = await self.rag.aquery(
+                        response_text = await (await self._ensure_rag()).aquery(
                             cleaned_query, param=query_param
                         )
 

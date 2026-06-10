@@ -471,6 +471,17 @@
   "apiSite": {
     "loading": "Loading API Documentation..."
   },
+  "workspace": {
+    "default": "Default",
+    "create": "New Workspace",
+    "createTitle": "Create Workspace",
+    "namePlaceholder": "Workspace name",
+    "delete": "Delete workspace",
+    "deleteConfirmTitle": "Delete Workspace",
+    "deleteConfirmDescription": "This will permanently delete all data in workspace \"{{name}}\". Are you sure?",
+    "cancel": "Cancel",
+    "confirm": "Delete"
+  },
   "apiKeyAlert": {
     "title": "API Key is required",
     "description": "Please enter your API key to access the service",

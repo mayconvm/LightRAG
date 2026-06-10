@@ -423,6 +423,7 @@ axiosInstance.interceptors.request.use((config) => {
 
   const apiKey = useSettingsStore.getState().apiKey
   const token = localStorage.getItem('LIGHTRAG-API-TOKEN');
+  const workspace = useSettingsStore.getState().activeWorkspace
 
   // Always include token if it exists, regardless of path
   if (token) {
@@ -430,6 +431,9 @@ axiosInstance.interceptors.request.use((config) => {
   }
   if (apiKey) {
     config.headers['X-API-Key'] = apiKey
+  }
+  if (workspace) {
+    config.headers['LIGHTRAG-WORKSPACE'] = workspace
   }
   return config
 })
@@ -613,6 +617,7 @@ export const queryTextStream = async (
 ) => {
   const apiKey = useSettingsStore.getState().apiKey;
   const token = localStorage.getItem('LIGHTRAG-API-TOKEN');
+  const workspace = useSettingsStore.getState().activeWorkspace
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
     'Accept': 'application/x-ndjson',
@@ -622,6 +627,9 @@ export const queryTextStream = async (
   }
   if (apiKey) {
     headers['X-API-Key'] = apiKey;
+  }
+  if (workspace) {
+    headers['LIGHTRAG-WORKSPACE'] = workspace;
   }
 
   try {
@@ -1285,5 +1293,31 @@ export const getDocumentsPaginatedWithTimeout = (
  */
 export const getDocumentStatusCounts = async (): Promise<StatusCountsResponse> => {
   const response = await axiosInstance.get('/documents/status_counts')
+  return response.data
+}
+
+export type WorkspaceListResponse = {
+  workspaces: string[]
+  default_workspace: string
+  count: number
+}
+
+export type WorkspaceActionResponse = {
+  workspace: string
+  status: string
+}
+
+export const listWorkspaces = async (): Promise<WorkspaceListResponse> => {
+  const response = await axiosInstance.get('/workspaces')
+  return response.data
+}
+
+export const createWorkspace = async (name: string): Promise<WorkspaceActionResponse> => {
+  const response = await axiosInstance.post(`/workspaces/${encodeURIComponent(name)}`)
+  return response.data
+}
+
+export const deleteWorkspace = async (name: string): Promise<WorkspaceActionResponse> => {
+  const response = await axiosInstance.delete(`/workspaces/${encodeURIComponent(name)}`)
   return response.data
 }
