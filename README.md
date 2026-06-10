@@ -236,6 +236,10 @@ Starting from version v1.5, LightRAG has officially introduced analysis and retr
 
 The LightRAG server offers not only a web-based UI for exploring LightRAG functionalities but also a comprehensive REST API. For more information about the LightRAG server, please refer to [LightRAG Server](./docs/LightRAG-API-Server.md).
 
+The server supports **multiple isolated workspaces** within a single instance —
+each workspace has independent storage, documents, and knowledge graph. See
+[Multi-Workspace](./docs/MultiWorkspace.md) for the full guide.
+
 ![iShot_2025-03-23_12.40.08](./README.assets/iShot_2025-03-23_12.40.08.png)
 
 ## Key Configuration Guide
@@ -297,6 +301,12 @@ MAX_PARALLEL_INSERT=3
 EMBEDDING_FUNC_MAX_ASYNC=16
 EMBEDDING_BATCH_NUM=32
 ```
+
+### Multi-Workspace Data Isolation
+
+LightRAG supports multiple workspaces within a single server process. Each
+workspace gets its own isolated storage — see
+[Multi-Workspace](./docs/MultiWorkspace.md) for setup and API reference.
 
 ### Selecting Backend Storage
 
