@@ -79,6 +79,13 @@ interface SettingsState {
   currentTab: Tab
   setCurrentTab: (tab: Tab) => void
 
+  // Workspace
+  activeWorkspace: string
+  setActiveWorkspace: (workspace: string) => void
+
+  availableWorkspaces: string[]
+  setAvailableWorkspaces: (workspaces: string[]) => void
+
   // Search label dropdown refresh trigger (non-persistent, runtime only)
   searchLabelDropdownRefreshTrigger: number
   triggerSearchLabelDropdownRefresh: () => void
@@ -228,6 +235,13 @@ const useSettingsStoreBase = create<SettingsState>()(
 
       setUserPromptHistory: (history: string[]) => set({ userPromptHistory: history }),
 
+      activeWorkspace: '',
+      setActiveWorkspace: (workspace: string) => set({ activeWorkspace: workspace }),
+
+      availableWorkspaces: [],
+      setAvailableWorkspaces: (workspaces: string[]) =>
+        set({ availableWorkspaces: workspaces }),
+
       // Search label dropdown refresh trigger (not persisted)
       searchLabelDropdownRefreshTrigger: 0,
       triggerSearchLabelDropdownRefresh: () =>
@@ -238,7 +252,7 @@ const useSettingsStoreBase = create<SettingsState>()(
     {
       name: 'settings-storage',
       storage: createJSONStorage(() => localStorage),
-      version: 19,
+      version: 20,
       migrate: (state: any, version: number) => {
         if (version < 2) {
           state.showEdgeLabel = false
@@ -340,6 +354,10 @@ const useSettingsStoreBase = create<SettingsState>()(
           if (state.querySettings) {
             delete state.querySettings.response_type
           }
+        }
+        if (version < 20) {
+          state.activeWorkspace = ''
+          state.availableWorkspaces = []
         }
         return state
       }

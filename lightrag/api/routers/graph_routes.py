@@ -4,11 +4,13 @@ This module contains all graph-related routes for the LightRAG API.
 
 from typing import Optional, Dict, Any
 import traceback
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
+from lightrag import LightRAG
 from lightrag.base import DeletionResult
 from lightrag.utils import logger
+from lightrag.api.workspace_manager import extract_workspace_from_headers
 from ..utils_api import get_combined_auth_dependency
 from .document_routes import check_pipeline_busy_or_raise
 
@@ -109,7 +111,7 @@ class RelationCreateRequest(BaseModel):
     )
 
 
-def create_graph_routes(rag, api_key: Optional[str] = None):
+def create_graph_routes(workspace_manager, api_key: Optional[str] = None):
     # Fresh router per call. A module-level instance would accumulate
     # duplicate routes when the factory is invoked more than once in the
     # same process (e.g. across tests), which triggers FastAPI's
@@ -118,8 +120,14 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
 
     combined_auth = get_combined_auth_dependency(api_key)
 
+    async def _resolve_rag(request: Request) -> LightRAG:
+        ws = getattr(request.state, "workspace", "")
+        return await workspace_manager.get_or_create(ws)
+
     @router.get("/graph/label/list", dependencies=[Depends(combined_auth)])
-    async def get_graph_labels():
+    async def get_graph_labels(
+        rag: LightRAG = Depends(_resolve_rag),
+    ):
         """
         Get all graph labels
 
@@ -137,6 +145,7 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
 
     @router.get("/graph/label/popular", dependencies=[Depends(combined_auth)])
     async def get_popular_labels(
+        rag: LightRAG = Depends(_resolve_rag),
         limit: int = Query(
             300, description="Maximum number of popular labels to return", ge=1, le=1000
         ),
@@ -161,9 +170,10 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
 
     @router.get("/graph/label/search", dependencies=[Depends(combined_auth)])
     async def search_labels(
-        q: str = Query(..., description="Search query string"),
+        rag: LightRAG = Depends(_resolve_rag),
+        q: str = Query(..., description="Search query for label"),
         limit: int = Query(
-            50, description="Maximum number of search results to return", ge=1, le=100
+            10, description="Maximum number of matching labels to return", ge=1, le=100
         ),
     ):
         """
@@ -187,6 +197,7 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
 
     @router.get("/graphs", dependencies=[Depends(combined_auth)])
     async def get_knowledge_graph(
+        rag: LightRAG = Depends(_resolve_rag),
         label: str = Query(..., description="Label to get knowledge graph for"),
         max_depth: int = Query(3, description="Maximum depth of graph", ge=1),
         max_nodes: int = Query(1000, description="Maximum nodes to return", ge=1),
@@ -225,6 +236,7 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
 
     @router.get("/graph/entity/exists", dependencies=[Depends(combined_auth)])
     async def check_entity_exists(
+        rag: LightRAG = Depends(_resolve_rag),
         name: str = Query(..., description="Entity name to check"),
     ):
         """
@@ -247,7 +259,10 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
             )
 
     @router.post("/graph/entity/edit", dependencies=[Depends(combined_auth)])
-    async def update_entity(request: EntityUpdateRequest):
+    async def update_entity(
+        request: EntityUpdateRequest,
+        rag: LightRAG = Depends(_resolve_rag),
+    ):
         """
         Update an entity's properties in the knowledge graph
 
@@ -440,7 +455,10 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
             )
 
     @router.post("/graph/relation/edit", dependencies=[Depends(combined_auth)])
-    async def update_relation(request: RelationUpdateRequest):
+    async def update_relation(
+        request: RelationUpdateRequest,
+        rag: LightRAG = Depends(_resolve_rag),
+    ):
         """Update a relation's properties in the knowledge graph
 
         Args:
@@ -478,7 +496,10 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
             )
 
     @router.post("/graph/entity/create", dependencies=[Depends(combined_auth)])
-    async def create_entity(request: EntityCreateRequest):
+    async def create_entity(
+        request: EntityCreateRequest,
+        rag: LightRAG = Depends(_resolve_rag),
+    ):
         """
         Create a new entity in the knowledge graph
 
@@ -554,7 +575,10 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
             )
 
     @router.post("/graph/relation/create", dependencies=[Depends(combined_auth)])
-    async def create_relation(request: RelationCreateRequest):
+    async def create_relation(
+        request: RelationCreateRequest,
+        rag: LightRAG = Depends(_resolve_rag),
+    ):
         """
         Create a new relationship between two entities in the knowledge graph
 
@@ -646,7 +670,10 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
             )
 
     @router.post("/graph/entities/merge", dependencies=[Depends(combined_auth)])
-    async def merge_entities(request: EntityMergeRequest):
+    async def merge_entities(
+        request: EntityMergeRequest,
+        rag: LightRAG = Depends(_resolve_rag),
+    ):
         """
         Merge multiple entities into a single entity, preserving all relationships
 
@@ -734,7 +761,10 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
         response_model=DeletionResult,
         dependencies=[Depends(combined_auth)],
     )
-    async def delete_entity(request: DeleteEntityRequest):
+    async def delete_entity(
+        request: DeleteEntityRequest,
+        rag: LightRAG = Depends(_resolve_rag),
+    ):
         """
         Delete an entity and all its relationships from the knowledge graph.
 
@@ -770,7 +800,10 @@ def create_graph_routes(rag, api_key: Optional[str] = None):
         response_model=DeletionResult,
         dependencies=[Depends(combined_auth)],
     )
-    async def delete_relation(request: DeleteRelationRequest):
+    async def delete_relation(
+        request: DeleteRelationRequest,
+        rag: LightRAG = Depends(_resolve_rag),
+    ):
         """
         Delete a relationship between two entities from the knowledge graph.
 

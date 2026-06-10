@@ -4,9 +4,11 @@ This module contains all query-related routes for the LightRAG API.
 
 import json
 from typing import Any, Dict, List, Literal, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from lightrag import LightRAG
 from lightrag.base import QueryParam
 from lightrag.api.utils_api import get_combined_auth_dependency
+from lightrag.api.workspace_manager import extract_workspace_from_headers
 from lightrag.utils import logger
 from pydantic import BaseModel, Field, field_validator
 
@@ -188,7 +190,7 @@ class StreamChunkResponse(BaseModel):
     )
 
 
-def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
+def create_query_routes(workspace_manager, api_key: Optional[str] = None, top_k: int = 60):
     # Fresh router per call. A module-level instance would accumulate
     # duplicate routes when the factory is invoked more than once in the
     # same process (e.g. across tests), which triggers FastAPI's
@@ -196,6 +198,10 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
     router = APIRouter(tags=["query"])
 
     combined_auth = get_combined_auth_dependency(api_key)
+
+    async def _resolve_rag(request: Request) -> LightRAG:
+        ws = getattr(request.state, "workspace", "")
+        return await workspace_manager.get_or_create(ws)
 
     @router.post(
         "/query",
@@ -326,7 +332,10 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             },
         },
     )
-    async def query_text(request: QueryRequest):
+    async def query_text(
+        request: QueryRequest,
+        rag: LightRAG = Depends(_resolve_rag),
+    ):
         """
         Comprehensive RAG query endpoint with non-streaming response. Parameter "stream" is ignored.
 
@@ -536,7 +545,10 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             },
         },
     )
-    async def query_text_stream(request: QueryRequest):
+    async def query_text_stream(
+        request: QueryRequest,
+        rag: LightRAG = Depends(_resolve_rag),
+    ):
         """
         Advanced RAG query endpoint with flexible streaming response.
 
@@ -1039,7 +1051,10 @@ def create_query_routes(rag, api_key: Optional[str] = None, top_k: int = 60):
             },
         },
     )
-    async def query_data(request: QueryRequest):
+    async def query_data(
+        request: QueryRequest,
+        rag: LightRAG = Depends(_resolve_rag),
+    ):
         """
         Advanced data retrieval endpoint for structured RAG analysis.
 

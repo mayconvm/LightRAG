@@ -20,6 +20,7 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Request,
     UploadFile,
 )
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -2928,7 +2929,10 @@ async def background_delete_documents(
 
 
 def create_document_routes(
-    rag: LightRAG, doc_manager: DocumentManager, api_key: Optional[str] = None
+    workspace_manager,
+    base_input_dir: str,
+    rag: LightRAG,
+    api_key: Optional[str] = None,
 ):
     # Fresh router per call — see the note above the temp_prefix constant.
     router = APIRouter(
@@ -2939,123 +2943,89 @@ def create_document_routes(
     # Create combined auth dependency for document routes
     combined_auth = get_combined_auth_dependency(api_key)
 
+    # -- Per-workspace helpers ------------------------------------------------
+
+    _doc_managers: dict[str, DocumentManager] = {}
+
+    def _get_doc_manager(workspace: str = "") -> DocumentManager:
+        ws = workspace or ""
+        if ws not in _doc_managers:
+            _doc_managers[ws] = DocumentManager(base_input_dir, workspace=ws)
+        return _doc_managers[ws]
+
+    # Default doc_manager for backward compat (handlers that reference
+    # these closure variables without adding the dependency will use
+    # the default workspace).
+    doc_manager = _get_doc_manager("")
+
+    async def _resolve_rag(request: Request) -> LightRAG:
+        ws: str = getattr(request.state, "workspace", "")
+        return await workspace_manager.get_or_create(ws)
+
     @router.post(
         "/scan", response_model=ScanResponse, dependencies=[Depends(combined_auth)]
     )
-    async def scan_for_new_documents(background_tasks: BackgroundTasks):
+    async def scan_for_new_documents(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        rag: LightRAG = Depends(_resolve_rag),
+    ):
         """
         Trigger the scanning process for new documents.
-
-        Refuses to start a new scan with
-        ``status='scanning_skipped_pipeline_busy'`` (and does not
-        schedule a background task) when any of these is set:
-
-        - ``pipeline_status["busy"]`` — the processing loop or another
-          destructive job is running.
-        - ``pipeline_status["scanning"]`` — another scan is already
-          running (any phase: classification or processing).
-        - ``pipeline_status["pending_enqueues"] > 0`` — an /upload,
-          /text or /texts endpoint has reserved a slot whose bg task
-          has not yet written to doc_status; starting a scan now would
-          race scan's classification reads against that pending write.
-
-        Both ``scanning`` and ``scanning_exclusive`` are acquired
-        synchronously here so a subsequent fast-follow request hits the
-        guard rather than racing against the not-yet-started task.
-        ``run_scanning_process`` clears ``scanning_exclusive`` once
-        classification is done, allowing concurrent uploads to land
-        while the scan-driven processing finishes.
-
-        Returns:
-            ScanResponse: A response object containing the scanning status and track_id
+        ...
         """
         from lightrag.exceptions import PipelineNotInitializedError
         from lightrag.kg.shared_storage import get_namespace_data, get_namespace_lock
 
-        # Generate track_id with "scan" prefix for scanning operation
+        ws: str = getattr(request.state, "workspace", "")
+        dm = _get_doc_manager(ws)
         track_id = generate_track_id("scan")
 
         try:
             pipeline_status = await get_namespace_data(
-                "pipeline_status", workspace=rag.workspace
+                "pipeline_status", workspace=ws
             )
         except PipelineNotInitializedError:
-            # Workspace pipeline_status not yet bootstrapped (e.g. mocked
-            # test rigs).  Treat as idle and allow the scan to proceed; the
-            # scanning flag has nowhere to live so it is effectively skipped.
-            background_tasks.add_task(run_scanning_process, rag, doc_manager, track_id)
+            background_tasks.add_task(run_scanning_process, rag, dm, track_id)
             return ScanResponse(
                 status="scanning_started",
                 message="Scanning process has been initiated in the background",
                 track_id=track_id,
             )
-        pipeline_status_lock = get_namespace_lock(
-            "pipeline_status", workspace=rag.workspace
-        )
+        pipeline_status_lock = get_namespace_lock("pipeline_status", workspace=ws)
 
-        # Atomically acquire the scanning flag.  Scan is the exclusive
-        # writer in this contract — it reads doc_status to make
-        # classification decisions (PROCESSED / resume / retry-as-new /
-        # archive) and would race with concurrent writers — so refuse if:
-        #   * pipeline is processing (busy=True): scan + processing both
-        #     read/mutate doc_status; serialise.
-        #   * another scan is in flight (scanning=True).
-        #   * any /upload, /text, /texts endpoint has reserved a
-        #     pending-enqueue slot (see _reserve_enqueue_slot): the bg
-        #     task has not yet written doc_status and we would otherwise
-        #     race with its mid-flight write.
         async with pipeline_status_lock:
             if pipeline_status.get("busy"):
-                logger.warning(
-                    "Scan request skipped: pipeline is busy processing documents"
-                )
+                logger.warning("Scan request skipped: pipeline is busy")
                 return ScanResponse(
                     status="scanning_skipped_pipeline_busy",
-                    message=(
-                        "Pipeline is currently busy processing documents. "
-                        "Wait for the running job to finish before triggering another scan."
-                    ),
+                    message="Pipeline is currently busy processing documents. "
+                    "Wait for the running job to finish before triggering another scan.",
                     track_id=track_id,
                 )
             if pipeline_status.get("scanning"):
-                logger.warning(
-                    "Scan request skipped: another scan is already in progress"
-                )
+                logger.warning("Scan request skipped: another scan is in progress")
                 return ScanResponse(
                     status="scanning_skipped_pipeline_busy",
-                    message=(
-                        "Another scan is already in progress. "
-                        "Wait for it to finish before triggering a new one."
-                    ),
+                    message="Another scan is already in progress. "
+                    "Wait for it to finish before triggering a new one.",
                     track_id=track_id,
                 )
             pending_enqueues = pipeline_status.get("pending_enqueues", 0)
             if pending_enqueues > 0:
                 logger.warning(
-                    "Scan request skipped: "
-                    f"{pending_enqueues} pending enqueue(s) reserved by "
-                    "upload/insert endpoints"
+                    "Scan request skipped: %d pending enqueue(s)", pending_enqueues
                 )
                 return ScanResponse(
                     status="scanning_skipped_pipeline_busy",
-                    message=(
-                        "Document upload/insert is being enqueued. "
-                        "Wait for in-flight work to complete before triggering a scan."
-                    ),
+                    message="Document upload/insert is being enqueued. "
+                    "Wait for in-flight work to complete before triggering a scan.",
                     track_id=track_id,
                 )
-            # ``scanning`` covers the whole scan task lifecycle (used by
-            # this endpoint to refuse overlapping scans).
-            # ``scanning_exclusive`` is True only during the
-            # classification phase: run_scanning_process clears it once
-            # classification is done so concurrent uploads can land
-            # while the scan-driven processing finishes.
             pipeline_status["scanning"] = True
             pipeline_status["scanning_exclusive"] = True
 
-        # Start the scanning process in the background with track_id.  The
-        # task is responsible for clearing both flags in its finally block.
-        background_tasks.add_task(run_scanning_process, rag, doc_manager, track_id)
+        background_tasks.add_task(run_scanning_process, rag, dm, track_id)
         return ScanResponse(
             status="scanning_started",
             message="Scanning process has been initiated in the background",
@@ -3066,7 +3036,10 @@ def create_document_routes(
         "/upload", response_model=InsertResponse, dependencies=[Depends(combined_auth)]
     )
     async def upload_to_input_dir(
-        background_tasks: BackgroundTasks, file: UploadFile = File(...)
+        request: Request,
+        background_tasks: BackgroundTasks,
+        file: UploadFile = File(...),
+        rag: LightRAG = Depends(_resolve_rag),
     ):
         """
         Upload a file to the input directory and index it.

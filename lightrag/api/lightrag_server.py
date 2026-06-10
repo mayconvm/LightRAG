@@ -68,6 +68,11 @@ from lightrag.kg.shared_storage import (
     cleanup_keyed_lock,
     finalize_share_data,
 )
+from lightrag.api.workspace_manager import (
+    WorkspaceManager,
+    sanitize_workspace,
+    extract_workspace_from_headers,
+)
 from fastapi.security import OAuth2PasswordRequestForm
 from lightrag.api.auth import auth_handler
 
@@ -853,9 +858,6 @@ def create_app(args):
     # Check if API key is provided either through env var or args
     api_key = os.getenv("LIGHTRAG_API_KEY") or args.key
 
-    # Initialize document manager with workspace support for data isolation
-    doc_manager = DocumentManager(args.input_dir, workspace=args.workspace)
-
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         """Lifespan context manager for startup and shutdown events"""
@@ -863,11 +865,7 @@ def create_app(args):
         app.state.background_tasks = set()
 
         try:
-            # Initialize database connections
-            # Note: initialize_storages() now auto-initializes pipeline_status for rag.workspace
             await rag.initialize_storages()
-
-            # Data migration regardless of storage implementation
             await rag.check_and_migrate_data()
 
             ASCIIColors.green("\nServer is ready to accept connections! 🚀\n")
@@ -875,8 +873,7 @@ def create_app(args):
             yield
 
         finally:
-            # Clean up database connections
-            await rag.finalize_storages()
+            await workspace_manager.drop_all()
 
             if "LIGHTRAG_GUNICORN_MODE" not in os.environ:
                 # Only perform cleanup in Uvicorn single-process mode
@@ -1981,11 +1978,37 @@ def create_app(args):
         for spec in ROLES
     }
 
-    # Initialize RAG with unified configuration
-    try:
+    def _build_role_llm_configs():
+        return {
+            spec.name: RoleLLMConfig(
+                func=role_llm_configs[spec.name]["func"],
+                kwargs=role_llm_configs[spec.name]["kwargs"],
+                max_async=role_llm_configs[spec.name]["max_async"],
+                timeout=role_llm_configs[spec.name]["timeout"],
+                metadata={
+                    "base_binding": args.llm_binding,
+                    "binding": role_llm_configs[spec.name]["binding"],
+                    "model": role_llm_configs[spec.name]["model"],
+                    "host": role_llm_configs[spec.name]["host"],
+                    "api_key": role_llm_configs[spec.name]["api_key"],
+                    "provider_options": role_llm_configs[spec.name][
+                        "provider_options"
+                    ],
+                    "bedrock_aws_options": role_llm_configs[spec.name][
+                        "bedrock_aws_options"
+                    ],
+                    "is_cross_provider": role_llm_configs[spec.name][
+                        "is_cross_provider"
+                    ],
+                },
+            )
+            for spec in ROLES
+        }
+
+    def _rag_factory(workspace: str) -> LightRAG:
         rag = LightRAG(
             working_dir=args.working_dir,
-            workspace=args.workspace,
+            workspace=workspace,
             llm_model_func=create_llm_model_func(args.llm_binding),
             llm_model_name=args.llm_model,
             llm_model_max_async=args.max_async,
@@ -2016,55 +2039,105 @@ def create_app(args):
             max_graph_nodes=args.max_graph_nodes,
             addon_params=addon_params,
             ollama_server_infos=ollama_server_infos,
-            role_llm_configs={
-                spec.name: RoleLLMConfig(
-                    func=role_llm_configs[spec.name]["func"],
-                    kwargs=role_llm_configs[spec.name]["kwargs"],
-                    max_async=role_llm_configs[spec.name]["max_async"],
-                    timeout=role_llm_configs[spec.name]["timeout"],
-                    metadata={
-                        "base_binding": args.llm_binding,
-                        "binding": role_llm_configs[spec.name]["binding"],
-                        "model": role_llm_configs[spec.name]["model"],
-                        "host": role_llm_configs[spec.name]["host"],
-                        "api_key": role_llm_configs[spec.name]["api_key"],
-                        "provider_options": role_llm_configs[spec.name][
-                            "provider_options"
-                        ],
-                        "bedrock_aws_options": role_llm_configs[spec.name][
-                            "bedrock_aws_options"
-                        ],
-                        "is_cross_provider": role_llm_configs[spec.name][
-                            "is_cross_provider"
-                        ],
-                    },
-                )
-                for spec in ROLES
-            },
+            role_llm_configs=_build_role_llm_configs(),
         )
+        rag.register_role_llm_builder(
+            lambda role, meta: (
+                create_role_llm_func(role, meta),
+                create_role_llm_model_kwargs(role, meta),
+            )
+        )
+        return rag
+
+    try:
+        rag = _rag_factory(args.workspace)
     except Exception as e:
         logger.error(f"Failed to initialize LightRAG: {e}")
         raise
 
     _log_role_provider_options(rag)
 
-    rag.register_role_llm_builder(
-        lambda role, meta: (
-            create_role_llm_func(role, meta),
-            create_role_llm_model_kwargs(role, meta),
-        )
-    )
+    workspace_manager = WorkspaceManager(creator=_rag_factory)
+
+    # -- Workspace middleware -------------------------------------------------
+    # Extracts LIGHTRAG-WORKSPACE header and stores the sanitised value on
+    # request.state so every route handler can resolve the correct instance.
+
+    @app.middleware("http")
+    async def _workspace_middleware(request: Request, call_next):
+        ws = extract_workspace_from_headers(request.headers)
+        request.state.workspace = ws
+        request.state.workspace_initialized = True
+        response = await call_next(request)
+        return response
+
+    # -- Helper to resolve the workspace-specific LightRAG instance ----------
+
+    async def _resolve_rag(request: Request) -> LightRAG:
+        ws = getattr(request.state, "workspace", "")
+        return await workspace_manager.get_or_create(ws)
 
     # Add routes
     # root_path is set on the app for reverse proxy support;
     # routes stay at their natural paths and are prefixed by the proxy or uvicorn --root-path
-    app.include_router(create_document_routes(rag, doc_manager, api_key))
-    app.include_router(create_query_routes(rag, api_key, args.top_k))
-    app.include_router(create_graph_routes(rag, api_key))
+    app.include_router(
+        create_document_routes(workspace_manager, args.input_dir, rag, api_key)
+    )
+    app.include_router(create_query_routes(workspace_manager, api_key, args.top_k))
+    app.include_router(create_graph_routes(workspace_manager, api_key))
 
     # Add Ollama API routes
-    ollama_api = OllamaAPI(rag, top_k=args.top_k, api_key=api_key)
+    ollama_api = OllamaAPI(workspace_manager, top_k=args.top_k, api_key=api_key)
     app.include_router(ollama_api.router, prefix="/api")
+
+    # -- Workspace management endpoints ---------------------------------------
+
+    @app.get("/workspaces", dependencies=[Depends(combined_auth)])
+    async def list_workspaces():
+        """List all active (cached) workspaces."""
+        return {
+            "workspaces": workspace_manager.list_workspaces(),
+            "default_workspace": get_default_workspace() or "",
+            "count": len(workspace_manager),
+        }
+
+    @app.post(
+        "/workspaces/{workspace:path}",
+        dependencies=[Depends(combined_auth)],
+        status_code=201,
+    )
+    async def create_or_ensure_workspace(workspace: str):
+        """Ensure a workspace exists by pre-creating its LightRAG instance.
+
+        The workspace name is sanitised (``[^a-zA-Z0-9_]`` → ``_``).
+        Returns the workspace name actually used after sanitisation.
+        """
+        ws = sanitize_workspace(workspace)
+        if not ws:
+            raise HTTPException(status_code=400, detail="Invalid workspace name")
+        await workspace_manager.get_or_create(ws)
+        return {"workspace": ws, "status": "ready"}
+
+    @app.delete(
+        "/workspaces/{workspace:path}",
+        dependencies=[Depends(combined_auth)],
+    )
+    async def delete_workspace(workspace: str):
+        """Drop a workspace and finalise all its storage backends.
+
+        The workspace name is sanitised (``[^a-zA-Z0-9_]`` → ``_``).
+        Returns 404 if the workspace does not exist.
+        """
+        ws = sanitize_workspace(workspace)
+        if not ws:
+            raise HTTPException(status_code=400, detail="Invalid workspace name")
+        dropped = await workspace_manager.drop(ws)
+        if not dropped:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Workspace '{ws}' not found or not yet created",
+            )
+        return {"workspace": ws, "status": "deleted"}
 
     # Custom Swagger UI endpoint for offline support
     @app.get("/docs", include_in_schema=False)
@@ -2228,10 +2301,9 @@ def create_app(args):
     async def get_status(request: Request):
         """Get current system status including WebUI availability"""
         try:
-            workspace = get_workspace_from_request(request)
-            default_workspace = get_default_workspace()
-            if workspace is None:
-                workspace = default_workspace
+            workspace = getattr(request.state, "workspace", None)
+            if not workspace:
+                workspace = get_default_workspace() or ""
             pipeline_status = await get_namespace_data(
                 "pipeline_status", workspace=workspace
             )

@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useState } from 'react'
 import Button from '@/components/ui/Button'
 import { SiteInfo, webuiPrefix } from '@/lib/constants'
 import AppSettings from '@/components/AppSettings'
@@ -7,9 +8,19 @@ import { useAuthStore } from '@/stores/state'
 import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
 import { navigationService } from '@/services/navigation'
-import { ZapIcon, LogOutIcon } from 'lucide-react'
+import { ZapIcon, LogOutIcon, LayersIcon } from 'lucide-react'
 import GithubIcon from '@/components/icons/GithubIcon'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/Select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/Tooltip'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/Dialog'
+import Input from '@/components/ui/Input'
+import * as api from '@/api/lightrag'
 
 interface NavigationTabProps {
   value: string
@@ -59,11 +70,18 @@ export default function SiteHeader() {
   const { t } = useTranslation()
   const { isGuestMode, coreVersion, apiVersion, username, webuiTitle, webuiDescription } = useAuthStore()
 
+  const activeWorkspace = useSettingsStore.use.activeWorkspace()
+  const setActiveWorkspace = useSettingsStore.use.setActiveWorkspace()
+  const availableWorkspaces = useSettingsStore.use.availableWorkspaces()
+  const setAvailableWorkspaces = useSettingsStore.use.setAvailableWorkspaces()
+
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [newWorkspaceName, setNewWorkspaceName] = useState('')
+
   const versionDisplay = (coreVersion && apiVersion)
     ? `${coreVersion}/${apiVersion}`
     : null;
 
-  // Check if frontend needs rebuild (apiVersion ends with warning symbol)
   const hasWarning = apiVersion?.endsWith('⚠️');
   const versionTooltip = hasWarning
     ? t('header.frontendNeedsRebuild')
@@ -72,6 +90,50 @@ export default function SiteHeader() {
   const handleLogout = () => {
     navigationService.navigateToLogin();
   }
+
+  const refreshWorkspaces = useCallback(async () => {
+    try {
+      const resp = await api.listWorkspaces()
+      setAvailableWorkspaces(resp.workspaces || [])
+    } catch { /* server may not support workspaces yet */ }
+  }, [setAvailableWorkspaces])
+
+  useEffect(() => {
+    refreshWorkspaces()
+  }, [refreshWorkspaces])
+
+  const handleWorkspaceChange = useCallback((value: string) => {
+    setActiveWorkspace(value === '_default' ? '' : value)
+  }, [setActiveWorkspace])
+
+  const handleCreateWorkspace = useCallback(async () => {
+    const name = newWorkspaceName.trim()
+    if (!name) return
+    try {
+      await api.createWorkspace(name)
+      setActiveWorkspace(name)
+      setNewWorkspaceName('')
+      setCreateDialogOpen(false)
+      await refreshWorkspaces()
+    } catch (e) {
+      console.error('Failed to create workspace', e)
+    }
+  }, [newWorkspaceName, setActiveWorkspace, refreshWorkspaces])
+
+  const handleDeleteWorkspace = useCallback(async (ws: string) => {
+    if (!ws) return
+    try {
+      await api.deleteWorkspace(ws)
+      if (activeWorkspace === ws) {
+        setActiveWorkspace('')
+      }
+      await refreshWorkspaces()
+    } catch (e) {
+      console.error('Failed to delete workspace', e)
+    }
+  }, [activeWorkspace, setActiveWorkspace, refreshWorkspaces])
+
+  const displayWorkspace = activeWorkspace || '_default'
 
   return (
     <header className="border-border/40 bg-background/95 supports-[backdrop-filter]:bg-background/60 sticky top-0 z-50 flex h-10 w-full border-b px-4 backdrop-blur">
@@ -111,12 +173,69 @@ export default function SiteHeader() {
       </div>
 
       <nav className="w-[200px] flex items-center justify-end">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          {/* Workspace selector */}
+          <div className="flex items-center gap-1">
+            <LayersIcon className="size-3 text-muted-foreground" />
+            <Select value={displayWorkspace} onValueChange={handleWorkspaceChange}>
+              <SelectTrigger className="h-7 w-[110px] border-0 bg-transparent px-1 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_default">
+                  {t('workspace.default', 'Default')}
+                </SelectItem>
+                {availableWorkspaces.map((ws) => (
+                  <SelectItem key={ws} value={ws}>
+                    <span className="flex items-center gap-1">
+                      {ws}
+                      <button
+                        className="ml-1 text-muted-foreground hover:text-destructive"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDeleteWorkspace(ws)
+                        }}
+                        title={t('workspace.delete', 'Delete')}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  </SelectItem>
+                ))}
+                <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+                  <DialogTrigger asChild>
+                    <button
+                      className="relative flex w-full cursor-default items-center rounded-sm py-1.5 pl-8 pr-2 text-xs hover:bg-accent hover:text-accent-foreground outline-none select-none"
+                    >
+                      + {t('workspace.create', 'New Workspace')}
+                    </button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>{t('workspace.createTitle', 'Create Workspace')}</DialogTitle>
+                    </DialogHeader>
+                    <div className="flex flex-col gap-3">
+                      <Input
+                        placeholder={t('workspace.namePlaceholder', 'Workspace name')}
+                        value={newWorkspaceName}
+                        onChange={(e) => setNewWorkspaceName(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleCreateWorkspace()}
+                      />
+                      <Button onClick={handleCreateWorkspace} className="self-end">
+                        {t('workspace.create', 'Create')}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </SelectContent>
+            </Select>
+          </div>
+
           {versionDisplay && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="text-xs text-gray-500 dark:text-gray-400 mr-1 cursor-default">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 cursor-default">
                     v{versionDisplay}
                   </span>
                 </TooltipTrigger>
